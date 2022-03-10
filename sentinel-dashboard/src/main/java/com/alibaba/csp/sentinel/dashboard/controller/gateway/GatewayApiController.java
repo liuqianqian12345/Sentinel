@@ -20,16 +20,20 @@ import com.alibaba.csp.sentinel.dashboard.auth.AuthService;
 import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiDefinitionEntity;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.gateway.ApiPredicateItemEntity;
+import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.FlowRuleEntity;
 import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
 import com.alibaba.csp.sentinel.dashboard.domain.Result;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.AddApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.ApiPredicateItemVo;
 import com.alibaba.csp.sentinel.dashboard.domain.vo.gateway.api.UpdateApiReqVo;
 import com.alibaba.csp.sentinel.dashboard.repository.gateway.InMemApiDefinitionStore;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import com.alibaba.csp.sentinel.util.StringUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -56,6 +60,14 @@ public class GatewayApiController {
     @Autowired
     private SentinelApiClient sentinelApiClient;
 
+    @Autowired
+    @Qualifier("gatewayApiNacosProvider")
+    private DynamicRuleProvider<List<ApiDefinitionEntity>> apiProvider;
+    @Autowired
+    @Qualifier("gatewayApiNacosPublisher")
+    private DynamicRulePublisher<List<ApiDefinitionEntity>> apiPublisher;
+
+
     @GetMapping("/list.json")
     @AuthAction(AuthService.PrivilegeType.READ_RULE)
     public Result<List<ApiDefinitionEntity>> queryApis(String app, String ip, Integer port) {
@@ -71,7 +83,8 @@ public class GatewayApiController {
         }
 
         try {
-            List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
+//            List<ApiDefinitionEntity> apis = sentinelApiClient.fetchApis(app, ip, port).get();
+            List<ApiDefinitionEntity> apis = apiProvider.getRules(app);
             repository.saveAll(apis);
             return Result.ofSuccess(apis);
         } catch (Throwable throwable) {
@@ -82,7 +95,7 @@ public class GatewayApiController {
 
     @PostMapping("/new.json")
     @AuthAction(AuthService.PrivilegeType.WRITE_RULE)
-    public Result<ApiDefinitionEntity> addApi(HttpServletRequest request, @RequestBody AddApiReqVo reqVo) {
+    public Result<ApiDefinitionEntity> addApi(HttpServletRequest request, @RequestBody AddApiReqVo reqVo) throws Exception {
 
         String app = reqVo.getApp();
         if (StringUtil.isBlank(app)) {
@@ -156,16 +169,17 @@ public class GatewayApiController {
             return Result.ofThrowable(-1, throwable);
         }
 
-        if (!publishApis(app, ip, port)) {
-            logger.warn("publish gateway apis fail after add");
-        }
+//        if (!publishApis(app, ip, port)) {
+//            logger.warn("publish gateway apis fail after add");
+//        }
+        publishApis(app);
 
         return Result.ofSuccess(entity);
     }
 
     @PostMapping("/save.json")
     @AuthAction(AuthService.PrivilegeType.WRITE_RULE)
-    public Result<ApiDefinitionEntity> updateApi(@RequestBody UpdateApiReqVo reqVo) {
+    public Result<ApiDefinitionEntity> updateApi(@RequestBody UpdateApiReqVo reqVo) throws Exception {
         String app = reqVo.getApp();
         if (StringUtil.isBlank(app)) {
             return Result.ofFail(-1, "app can't be null or empty");
@@ -219,9 +233,10 @@ public class GatewayApiController {
             return Result.ofThrowable(-1, throwable);
         }
 
-        if (!publishApis(app, entity.getIp(), entity.getPort())) {
-            logger.warn("publish gateway apis fail after update");
-        }
+//        if (!publishApis(app, entity.getIp(), entity.getPort())) {
+//            logger.warn("publish gateway apis fail after update");
+//        }
+        publishApis(app);
 
         return Result.ofSuccess(entity);
     }
@@ -229,7 +244,7 @@ public class GatewayApiController {
     @PostMapping("/delete.json")
     @AuthAction(AuthService.PrivilegeType.DELETE_RULE)
 
-    public Result<Long> deleteApi(Long id) {
+    public Result<Long> deleteApi(Long id) throws Exception {
         if (id == null) {
             return Result.ofFail(-1, "id can't be null");
         }
@@ -246,15 +261,20 @@ public class GatewayApiController {
             return Result.ofThrowable(-1, throwable);
         }
 
-        if (!publishApis(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort())) {
-            logger.warn("publish gateway apis fail after delete");
-        }
+//        if (!publishApis(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort())) {
+//            logger.warn("publish gateway apis fail after delete");
+//        }
+        publishApis(oldEntity.getApp());
 
         return Result.ofSuccess(id);
     }
 
-    private boolean publishApis(String app, String ip, Integer port) {
-        List<ApiDefinitionEntity> apis = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.modifyApis(app, ip, port, apis);
+    //    private boolean publishApis(String app, String ip, Integer port) {
+//        List<ApiDefinitionEntity> apis = repository.findAllByMachine(MachineInfo.of(app, ip, port));
+//        return sentinelApiClient.modifyApis(app, ip, port, apis);
+//    }
+    private void publishApis(/*@NonNull*/ String app) throws Exception {
+        List<ApiDefinitionEntity> rules = repository.findAllByApp(app);
+        apiPublisher.publish(app, rules);
     }
 }
